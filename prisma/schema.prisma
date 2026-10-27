@@ -1,0 +1,660 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================================
+// MULTI-TENANCY ROOT
+// ============================================================
+
+model Organization {
+  id           String   @id @default(cuid())
+  name         String
+  slug         String   @unique
+  isSampleData Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  users            User[]
+  crmAccounts      CrmAccount[]
+  contacts         Contact[]
+  deals            Deal[]
+  activities       Activity[]
+  inventoryUnits   InventoryUnit[]
+  suppliers        Supplier[]
+  trainingProgress TrainingProgress[]
+  buyingSignals    BuyingSignal[]
+  accountBriefs    AccountBrief[]
+
+  @@map("organizations")
+}
+
+model User {
+  id         String   @id @default(cuid())
+  supabaseId String   @unique
+  email      String   @unique
+  name       String?
+  role       Role     @default(REP)
+  orgId      String
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  assignedDeals        Deal[]             @relation("AssignedRep")
+  activities           Activity[]
+  auditLogs            AuditLog[]
+  verifiedGpuSpecs     GpuSpec[]          @relation("GpuVerifiedBy")
+  verifiedPlatforms    PlatformSpec[]     @relation("PlatformVerifiedBy")
+  trainingProgress     TrainingProgress[]
+  accountBriefs        AccountBrief[]
+  complianceReviews    Deal[]             @relation("ComplianceReviewer")
+
+  @@map("users")
+}
+
+enum Role {
+  REP
+  MANAGER
+  ADMIN
+}
+
+// ============================================================
+// SERVER ACADEMY — GPU SPECS
+// ============================================================
+
+model GpuSpec {
+  id         String        @id @default(cuid())
+  slug       String        @unique
+  name       String
+  generation GpuGeneration
+  variant    String
+
+  // Memory
+  memoryGb      Float
+  memoryType    String
+  memoryBwTbps  Float?
+
+  // Compute (stored as strings to preserve exact NVIDIA notation e.g. "312 TFLOPS")
+  fp64TflopsStr  String?
+  fp32TflopsStr  String?
+  tf32TflopsStr  String?
+  bf16TflopsStr  String?
+  fp16TflopsStr  String?
+  fp8TflopsStr   String?
+  int8TopsStr    String?
+
+  // Interconnect
+  nvlinkBwGbps      Float?
+  nvlinkGeneration  String?
+
+  // Physical
+  tdpWatts   Int?
+  formFactor String?
+
+  // Features
+  migSupport      Boolean @default(false)
+  migMaxInstances Int?
+  transformerEngine Boolean @default(false)
+
+  // Narrative
+  bestFor String? @db.Text
+  notes   String? @db.Text
+
+  // Spec verification
+  sourceUrl    String?
+  verified     Boolean  @default(false)
+  verifiedById String?
+  verifiedBy   User?    @relation("GpuVerifiedBy", fields: [verifiedById], references: [id])
+  verifiedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  platforms PlatformGpu[]
+
+  @@map("gpu_specs")
+}
+
+enum GpuGeneration {
+  A100
+  H100
+  H200
+  OTHER
+}
+
+// ============================================================
+// SERVER ACADEMY — PLATFORM / SERVER SPECS
+// ============================================================
+
+model PlatformSpec {
+  id   String @id @default(cuid())
+  slug String @unique
+  name String
+  oem  String
+
+  // Form factor
+  formFactorU Int?
+  gpuCount    Int
+
+  // CPU
+  cpuOptions String?
+
+  // Memory
+  maxRamGb Int?
+
+  // Storage
+  storageConfig String?
+
+  // Networking
+  networkingConfig String?
+  hasDpu           Boolean @default(false)
+  dpuModel         String?
+
+  // Power
+  tdpWatts  Int?
+  psuConfig String?
+
+  // Cooling
+  coolingType CoolingType @default(AIR)
+
+  // Physical
+  weightKg  Float?
+  rackUnits Int?
+
+  // Narrative
+  notes String? @db.Text
+
+  // Spec verification
+  sourceUrl    String?
+  verified     Boolean  @default(false)
+  verifiedById String?
+  verifiedBy   User?    @relation("PlatformVerifiedBy", fields: [verifiedById], references: [id])
+  verifiedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  gpus PlatformGpu[]
+
+  @@map("platform_specs")
+}
+
+enum CoolingType {
+  AIR
+  LIQUID
+  HYBRID
+}
+
+model PlatformGpu {
+  platformId String
+  gpuSpecId  String
+  platform   PlatformSpec @relation(fields: [platformId], references: [id], onDelete: Cascade)
+  gpuSpec    GpuSpec      @relation(fields: [gpuSpecId], references: [id], onDelete: Cascade)
+
+  @@id([platformId, gpuSpecId])
+  @@map("platform_gpus")
+}
+
+// ============================================================
+// SERVER ACADEMY — TRAINING & QUIZZES
+// ============================================================
+
+model TrainingModule {
+  id          String  @id @default(cuid())
+  title       String
+  slug        String  @unique
+  description String?
+  order       Int
+
+  questions TraizQuestion[]
+  progress  TrainingProgress[]
+
+  createdAt DateTime @default(now())
+
+  @@map("training_modules")
+}
+
+model TraizQuestion {
+  id         String         @id @default(cuid())
+  moduleId   String
+  module     TrainingModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  question   String         @db.Text
+  options    String[]
+  correctIdx Int
+  explanation String?       @db.Text
+  order      Int
+
+  @@map("quiz_questions")
+}
+
+model TrainingProgress {
+  id          String         @id @default(cuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orgId       String
+  org         Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  moduleId    String
+  module      TrainingModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  completed   Boolean        @default(false)
+  score       Int?
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+
+  @@unique([userId, moduleId])
+  @@map("training_progress")
+}
+
+// ============================================================
+// SERVER ACADEMY — OBJECTION LIBRARY
+// ============================================================
+
+model Objection {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  title         String
+  path          String   // "cloud" | "wait-blackwell" | "refurb-risky" | "lower-quote" | etc.
+  response      String   @db.Text
+  counterPoints String[]
+  relatedSlug   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("objections")
+}
+
+// ============================================================
+// SERVER ACADEMY — ICP SEGMENTS
+// ============================================================
+
+model IcpSegment {
+  id              String   @id @default(cuid())
+  name            String
+  slug            String   @unique
+  whyTheyBuy      String   @db.Text
+  typicalDealSize String?
+  talkingPoints   String[]
+  bestGpuFit      String?
+  createdAt       DateTime @default(now())
+
+  crmAccounts CrmAccount[]
+
+  @@map("icp_segments")
+}
+
+// ============================================================
+// CRM — ACCOUNTS
+// ============================================================
+
+model CrmAccount {
+  id           String       @id @default(cuid())
+  orgId        String
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  icpSegmentId String?
+  icpSegment   IcpSegment?  @relation(fields: [icpSegmentId], references: [id])
+
+  name        String
+  domain      String?
+  industry    String?
+  fitScore    Int?
+  intentScore Int?
+  hqCountry   String?
+  hqCity      String?
+  website     String?
+  linkedinUrl String?
+  notes       String? @db.Text
+  isSampleData Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contacts      Contact[]
+  deals         Deal[]
+  activities    Activity[]
+  accountBriefs AccountBrief[]
+  buyingSignals BuyingSignal[]
+
+  @@map("crm_accounts")
+}
+
+// ============================================================
+// CRM — CONTACTS
+// ============================================================
+
+model Contact {
+  id        String       @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  accountId String?
+  account   CrmAccount?  @relation(fields: [accountId], references: [id])
+
+  firstName   String
+  lastName    String
+  title       String?
+  email       String?
+  phone       String?
+  linkedinUrl String?
+  notes       String? @db.Text
+  isSampleData Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  activities Activity[]
+  deals      Deal[]     @relation("DealContacts")
+
+  @@map("contacts")
+}
+
+// ============================================================
+// CRM — DEALS
+// ============================================================
+
+model Deal {
+  id    String       @id @default(cuid())
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  accountId     String
+  account       CrmAccount @relation(fields: [accountId], references: [id])
+  assignedRepId String?
+  assignedRep   User?      @relation("AssignedRep", fields: [assignedRepId], references: [id])
+
+  title String
+  stage DealStage @default(PROSPECT)
+
+  // GPU specifics
+  targetGpuGeneration GpuGeneration?
+  gpuQuantity         Int?
+  nodeQuantity        Int?
+  workloadType        String?
+
+  // Logistics
+  deploymentCountry String?
+  deploymentSite    String?
+  powerReadiness    Boolean?
+  coolingReadiness  Boolean?
+
+  // Context
+  timeline       String?
+  budgetUsd      Float?
+  competingPaths String[]
+
+  // Compliance gating — ALL three required before advancing past BUYER_COMPLIANCE_SCREENING
+  complianceReviewedById String?
+  complianceReviewedBy   User?     @relation("ComplianceReviewer", fields: [complianceReviewedById], references: [id])
+  complianceReviewedAt   DateTime?
+  complianceNotes        String?   @db.Text
+
+  // Financials
+  valueUsd Float?
+
+  // Outcome
+  closeDate     DateTime?
+  winLossReason String?
+
+  isSampleData Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contacts     Contact[]              @relation("DealContacts")
+  activities   Activity[]
+  lineItems    QuoteLineItem[]
+  auditLogs    AuditLog[]
+  reservations InventoryReservation[]
+
+  @@map("deals")
+}
+
+enum DealStage {
+  PROSPECT
+  DISCOVERY
+  WORKLOAD_QUALIFIED
+  BUYER_COMPLIANCE_SCREENING
+  CONFIGURATION_QUOTE
+  DOCUMENTATION_REVIEW
+  PO_CONTRACT
+  FULFILLMENT
+  DEPLOYED_EXPANSION
+  CLOSED_LOST
+}
+
+// ============================================================
+// CRM — ACTIVITIES & AUDIT
+// ============================================================
+
+model Activity {
+  id        String       @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User         @relation(fields: [userId], references: [id])
+  accountId String?
+  account   CrmAccount?  @relation(fields: [accountId], references: [id])
+  dealId    String?
+  deal      Deal?        @relation(fields: [dealId], references: [id])
+  contactId String?
+  contact   Contact?     @relation(fields: [contactId], references: [id])
+
+  type       ActivityType
+  subject    String
+  body       String?     @db.Text
+  occurredAt DateTime    @default(now())
+  isSampleData Boolean   @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@map("activities")
+}
+
+enum ActivityType {
+  CALL
+  EMAIL
+  MEETING
+  NOTE
+  TASK
+}
+
+model AuditLog {
+  id     String @id @default(cuid())
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  action    String
+  fromValue String?
+  toValue   String?
+  notes     String?
+
+  createdAt DateTime @default(now())
+
+  @@map("audit_logs")
+}
+
+// ============================================================
+// INVENTORY
+// ============================================================
+
+model InventoryUnit {
+  id    String       @id @default(cuid())
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  serialNumber String @unique
+  oem          String
+  model        String
+  gpuType      String
+  gpuCount     Int
+
+  conditionGrade     ConditionGrade
+  certStatus         CertStatus     @default(INCOMING)
+  status             UnitStatus     @default(INCOMING)
+  warrantyType       WarrantyType?
+  warrantyTermMonths Int?
+
+  healthReportUrl String?
+  location        String?
+  costUsd         Float?
+  listPriceUsd    Float?
+  notes           String?
+
+  supplierId String?
+  supplier   Supplier? @relation(fields: [supplierId], references: [id])
+
+  isSampleData Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reservations InventoryReservation[]
+
+  @@map("inventory_units")
+}
+
+enum ConditionGrade {
+  A
+  B
+  C
+}
+
+enum CertStatus {
+  INCOMING
+  TESTING
+  CERTIFIED
+  FAILED
+}
+
+enum UnitStatus {
+  INCOMING
+  TESTING
+  CERTIFIED
+  RESERVED
+  SOLD
+  SHIPPED
+}
+
+enum WarrantyType {
+  NVIDIA_LIMITED
+  SELLER
+  AS_IS
+}
+
+model InventoryReservation {
+  id         String        @id @default(cuid())
+  unitId     String
+  unit       InventoryUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  dealId     String
+  deal       Deal          @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  reservedAt DateTime      @default(now())
+  releasedAt DateTime?
+
+  @@unique([unitId, dealId])
+  @@map("inventory_reservations")
+}
+
+model Supplier {
+  id    String       @id @default(cuid())
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  name                String
+  domain              String?
+  qualificationStatus SupplierStatus @default(PENDING)
+  qualifiedAt         DateTime?
+  notes               String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  units InventoryUnit[]
+
+  @@map("suppliers")
+}
+
+enum SupplierStatus {
+  PENDING
+  QUALIFIED
+  DISQUALIFIED
+}
+
+// ============================================================
+// QUOTES
+// ============================================================
+
+model QuoteLineItem {
+  id     String @id @default(cuid())
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  description  String
+  quantity     Int              @default(1)
+  unitPriceUsd Float
+  category     LineItemCategory
+
+  createdAt DateTime @default(now())
+
+  @@map("quote_line_items")
+}
+
+enum LineItemCategory {
+  SERVER
+  GPU_COMPONENT
+  WARRANTY
+  SHIPPING
+  OTHER
+}
+
+// ============================================================
+// PROSPECTING
+// ============================================================
+
+model BuyingSignal {
+  id        String       @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  accountId String?
+  account   CrmAccount?  @relation(fields: [accountId], references: [id])
+
+  type       SignalType
+  title      String
+  summary    String?    @db.Text
+  sourceUrl  String?
+  detectedAt DateTime   @default(now())
+
+  createdAt DateTime @default(now())
+
+  @@map("buying_signals")
+}
+
+enum SignalType {
+  FUNDING_ROUND
+  JOB_POSTING
+  DATA_CENTER_EXPANSION
+  POWER_ANNOUNCEMENT
+  PUBLIC_STATEMENT
+  PRODUCT_LAUNCH
+  OTHER
+}
+
+model AccountBrief {
+  id            String       @id @default(cuid())
+  orgId         String
+  org           Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  accountId     String
+  account       CrmAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  generatedById String
+  generatedBy   User         @relation(fields: [generatedById], references: [id])
+
+  content String @db.Text
+  sources Json
+
+  createdAt DateTime @default(now())
+
+  @@map("account_briefs")
+}

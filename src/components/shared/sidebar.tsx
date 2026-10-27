@@ -52,15 +52,33 @@ const NAV: NavItem[] = [
       { label: "Deals", href: "/crm/deals" },
     ],
   },
-  { label: "Inventory", href: "/inventory", icon: Package },
-  { label: "Prospecting", href: "/prospecting", icon: Search },
+  {
+    label: "Inventory",
+    href: "/inventory",
+    icon: Package,
+    children: [
+      { label: "All units", href: "/inventory" },
+      { label: "Suppliers", href: "/inventory/suppliers" },
+    ],
+  },
+  {
+    label: "Prospecting",
+    href: "/prospecting",
+    icon: Search,
+    children: [
+      { label: "ICP Segments", href: "/prospecting/icp" },
+      { label: "Buying Signals", href: "/prospecting/signals" },
+      { label: "AI Research", href: "/prospecting/research" },
+      { label: "CSV Import", href: "/prospecting/import" },
+    ],
+  },
   { label: "Rep Copilot", href: "/copilot", icon: Bot },
 ];
 
 export function Sidebar({ orgName, isSampleData }: { orgName: string; isSampleData: boolean }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [expanded, setExpanded] = useState<string[]>(["Server Academy", "CRM"]);
+  const [expanded, setExpanded] = useState<string[]>(["Server Academy", "CRM", "Inventory", "Prospecting"]);
 
   function toggle(label: string) {
     setExpanded((e) =>
